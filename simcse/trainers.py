@@ -49,29 +49,19 @@ from transformers.trainer_pt_utils import (
 
 from transformers.utils import logging
 from transformers.data.data_collator import DataCollator, DataCollatorWithPadding, default_data_collator
-import torch
-import torch.nn as nn
+import jittor
+import jittor.nn as nn
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
-from torch.utils.data.dataloader import DataLoader
-from torch.utils.data.dataset import Dataset
-from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data.sampler import RandomSampler, SequentialSampler
-
-if is_torch_tpu_available():
-    import torch_xla.core.xla_model as xm
-    import torch_xla.debug.metrics as met
-    import torch_xla.distributed.parallel_loader as pl
-
+from jittor.dataset import DataLoader
+# from torch.utils.data import DataLoader
+from jittor.dataset import Dataset
+# from jittor.distributions import DistributedSampler
+from jittor.dataset.sampler import RandomSampler, SequentialSampler
 if is_apex_available():
     from apex import amp
-
-if version.parse(torch.__version__) >= version.parse("1.6"):
-    _is_native_amp_available = True
-    from torch.cuda.amp import autocast
-
 if is_datasets_available():
     import datasets
-
+from torch.utils.data.distributed import DistributedSampler
 from transformers.trainer import _model_unwrap
 from transformers.optimization import Adafactor, AdamW, get_scheduler
 import copy
@@ -89,32 +79,33 @@ from filelock import FileLock
 logger = logging.get_logger(__name__)
 
 class CLTrainer(Trainer):
-
-    def evaluate(
+    def evaluate(#定义evaluate函数，用于评估模型在各个任务上的性能返回值为一个字典
         self,
         eval_dataset: Optional[Dataset] = None,
         ignore_keys: Optional[List[str]] = None,
         metric_key_prefix: str = "eval",
         eval_senteval_transfer: bool = False,
-    ) -> Dict[str, float]:
+    ) -> Dict[str, float]:#以下内容为evaluate函数的具体实现
 
         # SentEval prepare and batcher
         def prepare(params, samples):
             return
 
-        def batcher(params, batch):
+        def batcher(params, batch):#定义batcher函数，用于将数据转换为模型输入
             sentences = [' '.join(s) for s in batch]
-            batch = self.tokenizer.batch_encode_plus(
+            batch = self.tokenizer.batch_encode_plus(#将句子转换为token
                 sentences,
                 return_tensors='pt',
                 padding=True,
             )
-            for k in batch:
-                batch[k] = batch[k].to(self.args.device)
-            with torch.no_grad():
-                outputs = self.model(**batch, output_hidden_states=True, return_dict=True, sent_emb=True)
-                pooler_output = outputs.pooler_output
-            return pooler_output.cpu()
+            # for k in batch:
+            #     #111111111111111111111111
+            #     batch[k] = batch[k].to(self.args.device)#将batch中的数据转移到设备上
+            with jittor.no_grad():#不进行梯度计算
+                outputs = self.model(**batch, output_hidden_states=True, return_dict=True, sent_emb=True)#获取模型输出
+                pooler_output = outputs.pooler_output#获取pooler_output
+                #22222222222222222222222222
+            return pooler_output
 
         # Set params for SentEval (fastmode)
         params = {'task_path': PATH_TO_DATA, 'usepytorch': True, 'kfold': 5}
@@ -123,7 +114,7 @@ class CLTrainer(Trainer):
 
         se = senteval.engine.SE(params, batcher, prepare)
         tasks = ['STSBenchmark', 'SICKRelatedness']
-        if eval_senteval_transfer or self.args.eval_transfer:
+        if eval_senteval_transfer or self.args.eval_transfer:#如果需要进行transfer任务的评估
             tasks = ['STSBenchmark', 'SICKRelatedness', 'MR', 'CR', 'SUBJ', 'MPQA', 'SST2', 'TREC', 'MRPC']
         self.model.eval()
         results = se.eval(tasks)
@@ -179,17 +170,17 @@ class CLTrainer(Trainer):
                 if self.sharded_dpp:
                     self.optimizer.consolidate_state_dict()
 
-                if is_torch_tpu_available():
-                    xm.rendezvous("saving_optimizer_states")
-                    xm.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                    with warnings.catch_warnings(record=True) as caught_warnings:
-                        xm.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-                        reissue_pt_warnings(caught_warnings)
-                elif self.is_world_process_zero() and not self.deepspeed:
+                # if is_torch_tpu_available():
+                #     xm.rendezvous("saving_optimizer_states")
+                #     xm.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+                #     with warnings.catch_warnings(record=True) as caught_warnings:
+                #         xm.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+                #         reissue_pt_warnings(caught_warnings)
+                if self.is_world_process_zero() and not self.deepspeed:
                     # deepspeed.save_checkpoint above saves model/optim/sched
-                    torch.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+                    jittor.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
                     with warnings.catch_warnings(record=True) as caught_warnings:
-                        torch.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+                        jittor.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
                     reissue_pt_warnings(caught_warnings)
 
                 # Save the Trainer state
@@ -204,7 +195,6 @@ class CLTrainer(Trainer):
                     run_id = trial.number
                 else:
                     from ray import tune
-
                     run_id = tune.get_trial_id()
                 run_name = self.hp_name(trial) if self.hp_name is not None else f"run-{run_id}"
                 output_dir = os.path.join(self.args.output_dir, run_name, checkpoint_folder)
@@ -221,17 +211,17 @@ class CLTrainer(Trainer):
             if self.sharded_dpp:
                 self.optimizer.consolidate_state_dict()
 
-            if is_torch_tpu_available():
-                xm.rendezvous("saving_optimizer_states")
-                xm.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+            # if is_torch_tpu_available():
+            #     xm.rendezvous("saving_optimizer_states")
+            #     xm.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+            #     with warnings.catch_warnings(record=True) as caught_warnings:
+            #         xm.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+            #         reissue_pt_warnings(caught_warnings)
+            if self.is_world_process_zero() and not self.deepspeed:
+                # deepspeed.save_checkpoint above saves model/optim/sched，如果不是deepspeed，保存optimizer和scheduler
+                jittor.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
                 with warnings.catch_warnings(record=True) as caught_warnings:
-                    xm.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-                    reissue_pt_warnings(caught_warnings)
-            elif self.is_world_process_zero() and not self.deepspeed:
-                # deepspeed.save_checkpoint above saves model/optim/sched
-                torch.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                with warnings.catch_warnings(record=True) as caught_warnings:
-                    torch.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+                    jittor.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
                 reissue_pt_warnings(caught_warnings)
 
 
@@ -266,8 +256,8 @@ class CLTrainer(Trainer):
             set_seed(self.args.seed)
 
             model = self.call_model_init(trial)
-            if not self.is_model_parallel:
-                model = model.to(self.args.device)
+            # if not self.is_model_parallel:
+            #     model = model.to(self.args.device)
 
             self.model = model
             self.model_wrapped = model
@@ -280,7 +270,6 @@ class CLTrainer(Trainer):
         
         # Data loader and number of training steps
         train_dataloader = self.get_train_dataloader()
-
         # Setting up training control variables:
         # number of training epochs: num_train_epochs
         # number of training steps per epoch: num_update_steps_per_epoch
@@ -302,7 +291,7 @@ class CLTrainer(Trainer):
             num_train_epochs = 1
             num_update_steps_per_epoch = max_steps
 
-        if self.args.deepspeed:
+        if self.args.deepspeed:#如果使用deepspeed,
             model, optimizer, lr_scheduler = init_deepspeed(self, num_training_steps=max_steps)
             self.model = model.module
             self.model_wrapped = model  # will get further wrapped in DDP
@@ -320,19 +309,19 @@ class CLTrainer(Trainer):
 
         model = self.model_wrapped
 
-        # Mixed precision training with apex (torch < 1.6)
-        if self.use_apex:
-            model, self.optimizer = amp.initialize(model, self.optimizer, opt_level=self.args.fp16_opt_level)
+        # Mixed precision training with apex (jittor < 1.6)
+        # if self.use_apex:
+        #     model, self.optimizer = amp.initialize(model, self.optimizer, opt_level=self.args.fp16_opt_level)
 
         # Multi-gpu training (should be after apex fp16 initialization)
         if self.args.n_gpu > 1:
-            model = torch.nn.DataParallel(model)
+            model = jittor.nn.DataParallel(model)
 
         # Distributed training (should be after apex fp16 initialization)
         if self.sharded_dpp:
             model = ShardedDDP(model, self.optimizer)
         elif self.args.local_rank != -1:
-            model = torch.nn.parallel.DistributedDataParallel(
+            model = jittor.nn.parallel.DistributedDataParallel(
                 model,
                 device_ids=[self.args.local_rank],
                 output_device=self.args.local_rank,
@@ -354,14 +343,14 @@ class CLTrainer(Trainer):
         # self.model_wrapped is DDP(Transformers Model), DDP(Deepspeed(Transformers Model)), etc.
 
         # Train!
-        if is_torch_tpu_available():
-            total_train_batch_size = self.args.train_batch_size * xm.xrt_world_size()
-        else:
-            total_train_batch_size = (
-                self.args.train_batch_size
-                * self.args.gradient_accumulation_steps
-                * (torch.distributed.get_world_size() if self.args.local_rank != -1 else 1)
-            )
+        # if is_torch_tpu_available():
+        #     total_train_batch_size = self.args.train_batch_size * xm.xrt_world_size()
+        # else:
+        total_train_batch_size = (
+            self.args.train_batch_size
+            * self.args.gradient_accumulation_steps
+            * (jittor.distributed.get_world_size() if self.args.local_rank != -1 else 1)
+        )
 
         num_examples = (
             self.num_examples(train_dataloader)
@@ -416,7 +405,7 @@ class CLTrainer(Trainer):
         self.state.is_world_process_zero = self.is_world_process_zero()
 
         # tr_loss is a tensor to avoid synchronization of TPUs through .item()
-        tr_loss = torch.tensor(0.0).to(self.args.device)
+        tr_loss = jittor.float32(0.0)#.to(self.args.device)
         # _total_loss_scalar is updated everytime .item() has to be called on tr_loss and stores the sum of all losses
         self._total_loss_scalar = 0.0
         self._globalstep_last_logged = 0
@@ -432,10 +421,11 @@ class CLTrainer(Trainer):
                 for _ in train_dataloader:
                     break
         for epoch in range(epochs_trained, num_train_epochs):
-            if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
-                train_dataloader.sampler.set_epoch(epoch)
+            # input("检查distributed sampler")
+            # if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
+            #     input("DistributedSampler detected. Press any key to continue...")
+            #     train_dataloader.sampler.set_epoch(epoch)
             epoch_iterator = train_dataloader
-
             # Reset the past mems state at the beginning of each epoch if necessary.
             if self.args.past_index >= 0:
                 self._past = None
@@ -471,8 +461,7 @@ class CLTrainer(Trainer):
                 ):
                     # Gradient clipping
                     if self.args.max_grad_norm is not None and self.args.max_grad_norm > 0 and not self.deepspeed:
-                        # deepspeed does its own clipping
-
+                        # deepspeed does its own clippi
                         if self.use_amp:
                             # AMP: gradients need unscaling
                             self.scaler.unscale_(self.optimizer)
@@ -482,15 +471,15 @@ class CLTrainer(Trainer):
                             self.optimizer.clip_grad_norm(self.args.max_grad_norm)
                         else:
                             # Revert to normal clipping otherwise, handling Apex or full precision
-                            torch.nn.utils.clip_grad_norm_(
+                            jittor.nn.utils.clip_grad_norm_(
                                 amp.master_params(self.optimizer) if self.use_apex else model.parameters(),
                                 self.args.max_grad_norm,
                             )
 
                     # Optimizer step
-                    if is_torch_tpu_available():
-                        xm.optimizer_step(self.optimizer)
-                    elif self.use_amp:
+                    # if is_torch_tpu_available():
+                    #     xm.optimizer_step(self.optimizer)
+                    if self.use_amp:
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
                     else:
@@ -512,17 +501,17 @@ class CLTrainer(Trainer):
             self.control = self.callback_handler.on_epoch_end(self.args, self.state, self.control)
             self._maybe_log_save_evaluate(tr_loss, model, trial, epoch)
 
-            if self.args.tpu_metrics_debug or self.args.debug:
-                if is_torch_tpu_available():
-                    # tpu-comment: Logging debug metrics for PyTorch/XLA (compile, execute times, ops, etc.)
-                    xm.master_print(met.metrics_report())
-                else:
-                    logger.warning(
-                        "You enabled PyTorch/XLA debug metrics but you don't have a TPU "
-                        "configured. Check your training configuration if this is unexpected."
-                    )
-            if self.control.should_training_stop:
-                break
+            # if self.args.tpu_metrics_debug or self.args.debug:
+            #     if is_torch_tpu_available():
+            #         # tpu-comment: Logging debug metrics for PyTorch/XLA (compile, execute times, ops, etc.)
+            #         xm.master_print(met.metrics_report())
+            #     else:
+            #         logger.warning(
+            #             "You enabled PyTorch/XLA debug metrics but you don't have a TPU "
+            #             "configured. Check your training configuration if this is unexpected."
+            #         )
+            # if self.control.should_training_stop:
+            #     break
 
         if self.args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of training
@@ -535,10 +524,10 @@ class CLTrainer(Trainer):
             )
             if isinstance(self.model, PreTrainedModel):
                 self.model = self.model.from_pretrained(self.state.best_model_checkpoint, model_args=self.model_args)
-                if not self.is_model_parallel:
-                    self.model = self.model.to(self.args.device)
+                # if not self.is_model_parallel:
+                #     self.model = self.model#.to(self.args.device)
             else:
-                state_dict = torch.load(os.path.join(self.state.best_model_checkpoint, WEIGHTS_NAME))
+                state_dict = jittor.load(os.path.join(self.state.best_model_checkpoint, WEIGHTS_NAME))
                 self.model.load_state_dict(state_dict)
 
             if self.deepspeed:

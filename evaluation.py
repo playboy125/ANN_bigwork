@@ -5,7 +5,6 @@ import logging
 import argparse
 from prettytable import PrettyTable
 import torch
-import transformers
 from transformers import AutoModel, AutoTokenizer
 
 # Set up logger
@@ -50,10 +49,11 @@ def main():
     args = parser.parse_args()
     
     # Load transformers' model checkpoint
-    model = AutoModel.from_pretrained(args.model_name_or_path)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
+    model = AutoModel.from_pretrained(args.model_name_or_path)#加载预训练模型
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)#加载预训练模型的tokenizer
+    # 
+    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # model = model.to(device)
     
     # Set up the tasks
     if args.task_set == 'sts':
@@ -65,7 +65,7 @@ def main():
         args.tasks += ['MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC']
 
     # Set params for SentEval
-    if args.mode == 'dev' or args.mode == 'fasttest':
+    if args.mode == 'dev' or args.mode == 'fasttest':#fasttest模式下，只测试少量数据
         # Fast mode
         params = {'task_path': PATH_TO_DATA, 'usepytorch': True, 'kfold': 5}
         params['classifier'] = {'nhid': 0, 'optim': 'rmsprop', 'batch_size': 128,
@@ -90,15 +90,15 @@ def main():
         sentences = [' '.join(s) for s in batch]
 
         # Tokenization
-        if max_length is not None:
+        if max_length is not None:#如果max_length不为空，将句子转换为token
             batch = tokenizer.batch_encode_plus(
                 sentences,
                 return_tensors='pt',
                 padding=True,
                 max_length=max_length,
                 truncation=True
-            )
-        else:
+            )#将句子转换为token，
+        else:#如果max_length为空，将句子转换为token
             batch = tokenizer.batch_encode_plus(
                 sentences,
                 return_tensors='pt',
@@ -107,9 +107,9 @@ def main():
 
         # Move to the correct device
         for k in batch:
-            batch[k] = batch[k].to(device)
+            batch[k] = batch[k]#.to(device)
         
-        # Get raw embeddings
+        # Get raw embeddings，获取句子的embedding
         with torch.no_grad():
             outputs = model(**batch, output_hidden_states=True, return_dict=True)
             last_hidden = outputs.last_hidden_state
@@ -119,21 +119,21 @@ def main():
         # Apply different poolers
         if args.pooler == 'cls':
             # There is a linear+activation layer after CLS representation
-            return pooler_output.cpu()
+            return pooler_output
         elif args.pooler == 'cls_before_pooler':
-            return last_hidden[:, 0].cpu()
+            return last_hidden[:, 0]
         elif args.pooler == "avg":
-            return ((last_hidden * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)).cpu()
+            return ((last_hidden * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1))#.cpu()
         elif args.pooler == "avg_first_last":
             first_hidden = hidden_states[1]
             last_hidden = hidden_states[-1]
             pooled_result = ((first_hidden + last_hidden) / 2.0 * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)
-            return pooled_result.cpu()
+            return pooled_result
         elif args.pooler == "avg_top2":
             second_last_hidden = hidden_states[-2]
             last_hidden = hidden_states[-1]
             pooled_result = ((last_hidden + second_last_hidden) / 2.0 * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)
-            return pooled_result.cpu()
+            return pooled_result
         else:
             raise NotImplementedError
 

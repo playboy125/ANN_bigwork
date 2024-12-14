@@ -15,6 +15,7 @@ from __future__ import absolute_import, division, unicode_literals
 import sys
 import logging
 # import GenSen package
+# import gensen
 from gensen import GenSen, GenSenSingle
 
 # Set PATHs
@@ -30,7 +31,7 @@ def prepare(params, samples):
     return
 
 def batcher(params, batch):
-    batch = [' '.join(sent) if sent != [] else '.' for sent in batch]
+    batch = [' '.join(sent) if sent != [] else '.' for sent in batch]#这是
     _, reps_h_t = gensen.get_representation(
         sentences, pool='last', return_numpy=True, tokenize=True
     )

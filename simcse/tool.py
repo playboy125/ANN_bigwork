@@ -2,8 +2,7 @@ import logging
 from tqdm import tqdm
 import numpy as np
 from numpy import ndarray
-import torch
-from torch import Tensor, device
+import jittor as jt
 import transformers
 from transformers import AutoModel, AutoTokenizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -20,15 +19,15 @@ class SimCSE(object):
     """
     def __init__(self, model_name_or_path: str, 
                 device: str = None,
-                num_cells: int = 100,
+                num_cells: int = 100,#
                 num_cells_in_search: int = 10,
                 pooler = None):
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.model = AutoModel.from_pretrained(model_name_or_path)
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = device
+        # if device is None:
+        #     device = "cuda" if torch.cuda.is_available() else "cpu"
+        # self.device = device
 
         self.index = None
         self.is_faiss_index = False
@@ -49,10 +48,10 @@ class SimCSE(object):
                 normalize_to_unit: bool = True,
                 keepdim: bool = False,
                 batch_size: int = 64,
-                max_length: int = 128) -> Union[ndarray, Tensor]:
+                max_length: int = 128) -> ndarray:
 
-        target_device = self.device if device is None else device
-        self.model = self.model.to(target_device)
+        # target_device = self.device if device is None else device
+        # self.model = self.model.to(target_device)
         
         single_sentence = False
         if isinstance(sentence, str):
@@ -60,7 +59,7 @@ class SimCSE(object):
             single_sentence = True
 
         embedding_list = [] 
-        with torch.no_grad():
+        with jt.no_grad():
             total_batch = len(sentence) // batch_size + (1 if len(sentence) % batch_size > 0 else 0)
             for batch_id in tqdm(range(total_batch)):
                 inputs = self.tokenizer(
@@ -70,7 +69,7 @@ class SimCSE(object):
                     max_length=max_length, 
                     return_tensors="pt"
                 )
-                inputs = {k: v.to(target_device) for k, v in inputs.items()}
+                inputs = {k: v for k, v in inputs.items()}
                 outputs = self.model(**inputs, return_dict=True)
                 if self.pooler == "cls":
                     embeddings = outputs.pooler_output
@@ -80,15 +79,15 @@ class SimCSE(object):
                     raise NotImplementedError
                 if normalize_to_unit:
                     embeddings = embeddings / embeddings.norm(dim=1, keepdim=True)
-                embedding_list.append(embeddings.cpu())
-        embeddings = torch.cat(embedding_list, 0)
-        
+                embedding_list.append(embeddings)
+        embedding_list = [e.detach().numpy() for e in embedding_list]
+        embeddings = jt.concat(embedding_list, 0)
         if single_sentence and not keepdim:
             embeddings = embeddings[0]
-        
-        if return_numpy and not isinstance(embeddings, ndarray):
-            return embeddings.numpy()
-        return embeddings
+        return embeddings.numpy()
+        # if return_numpy and not isinstance(embeddings, ndarray):
+        #     return embeddings.numpy()
+        # return embeddings
     
     def similarity(self, queries: Union[str, List[str]], 
                     keys: Union[str, List[str], ndarray], 
@@ -259,7 +258,7 @@ if __name__=="__main__":
         'A woman is making a photo.'
     ]
 
-    model_name = "princeton-nlp/sup-simcse-bert-base-uncased"
+    model_name = "/home/aiuser/SimCSE/unsup-simcse-bert-base-uncased"#需要加载一个训练模型
     simcse = SimCSE(model_name)
 
     print("\n=========Calculate cosine similarities between queries and sentences============\n")

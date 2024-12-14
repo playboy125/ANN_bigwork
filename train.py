@@ -4,10 +4,11 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import Optional, Union, List, Dict, Tuple
-import torch
+# import jt
+import jittor as jt
 import collections
 import random
-
+import torch
 from datasets import load_dataset
 
 import transformers
@@ -15,6 +16,7 @@ from transformers import (
     CONFIG_MAPPING,
     MODEL_FOR_MASKED_LM_MAPPING,
     AutoConfig,
+    AutoModel,
     AutoModelForMaskedLM,
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -28,7 +30,7 @@ from transformers import (
     EvalPrediction,
     BertModel,
     BertForPreTraining,
-    RobertaModel
+    RobertaModel,
 )
 from transformers.tokenization_utils_base import BatchEncoding, PaddingStrategy, PreTrainedTokenizerBase
 from transformers.trainer_utils import is_main_process
@@ -37,19 +39,19 @@ from transformers.file_utils import cached_property, torch_required, is_torch_av
 from simcse.models import RobertaForCL, BertForCL
 from simcse.trainers import CLTrainer
 
-logger = logging.getLogger(__name__)
-MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())
+logger = logging.getLogger(__name__)#
+MODEL_CONFIG_CLASSES = list(MODEL_FOR_MASKED_LM_MAPPING.keys())#
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 @dataclass
-class ModelArguments:
+class ModelArguments:#这是一个数据类，用来存储模型参数
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune, or train from scratch.
     """
 
     # Huggingface's original arguments
-    model_name_or_path: Optional[str] = field(
-        default=None,
+    model_name_or_path: Optional[str] = field(#模型的名字或路径
+        default="unsup-simcse-bert-base-uncased",
         metadata={
             "help": "The model checkpoint for weights initialization."
             "Don't set if you want to train a model from scratch."
@@ -125,7 +127,7 @@ class ModelArguments:
 
 
 @dataclass
-class DataTrainingArguments:
+class DataTrainingArguments:#这是一个数据类，用来存储数据集参数
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
@@ -185,7 +187,7 @@ class DataTrainingArguments:
 
 
 @dataclass
-class OurTrainingArguments(TrainingArguments):
+class OurTrainingArguments(TrainingArguments):#这是一个数据类，用来存储训练参数
     # Evaluation
     ## By default, we evaluate STS (dev) during training (for selecting best checkpoints) and evaluate 
     ## both STS and transfer tasks (dev) at the end of training. Using --eval_transfer will allow evaluating
@@ -194,7 +196,6 @@ class OurTrainingArguments(TrainingArguments):
         default=False,
         metadata={"help": "Evaluate transfer task dev sets (in validation)."}
     )
-
     @cached_property
     @torch_required
     def _setup_devices(self) -> "torch.device":
@@ -243,20 +244,70 @@ class OurTrainingArguments(TrainingArguments):
 
         return device
 
+    # @cached_property
+    #如果使用的是jittor框架，这一部分就是不需要的。
+    # @jt_required
+    # def _setup_devices(self) -> "jt.device":#设置设备
+    #     logger.info("Pyjt: setting up devices")
+    #     if self.no_cuda:
+    #         device = jt.device("cpu")
+    #         self._n_gpu = 0
+    #     elif():
+    #         import jt_xla.core.xla_model as xm
+    #         device = xm.xla_device()
+    #         self._n_gpu = 0
+    #     elif self.local_rank == -1:
+    #         # if n_gpu is > 1 we'll use nn.DataParallel.
+    #         # If you only want to use a specific subset of GPUs use `CUDA_VISIBLE_DEVICES=0`
+    #         # Explicitly set CUDA to the first (index 0) CUDA device, otherwise `set_device` will
+    #         # trigger an error that a device index is missing. Index 0 takes into account the
+    #         # GPUs available in the environment, so `CUDA_VISIBLE_DEVICES=1,2` with `cuda:0`
+    #         # will use the first GPU in that env, i.e. GPU#1
+    #         device = jt.device("cuda:0" if jt.cuda.is_available() else "cpu")
+    #         # Sometimes the line in the postinit has not been run before we end up here, so just checking we're not at
+    #         # the default value.
+    #         self._n_gpu = jt.cuda.device_count()
+    #     else:
+    #         # Here, we'll use jt.distributed.
+    #         # Initializes the distributed backend which will take care of synchronizing nodes/GPUs
+    #         #
+    #         # deepspeed performs its own DDP internally, and requires the program to be started with:
+    #         # deepspeed  ./program.py
+    #         # rather than:
+    #         # python -m jt.distributed.launch --nproc_per_node=2 ./program.py
+    #         if self.deepspeed:
+    #             from .integrations import is_deepspeed_available
+
+    #             if not is_deepspeed_available():
+    #                 raise ImportError("--deepspeed requires deepspeed: `pip install deepspeed`.")
+    #             import deepspeed
+
+    #             deepspeed.init_distributed()
+    #         else:
+    #             jt.distributed.init_process_group(backend="nccl")
+    #         device = jt.device("cuda", self.local_rank)
+    #         self._n_gpu = 1
+
+    #     if device.type == "cuda":
+    #         jt.cuda.set_device(device)
+
+    #     print(device)
+    #     return device
+
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
-
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, OurTrainingArguments))
-    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, OurTrainingArguments))#解析器，用来解析参数
+    #解析器的parse_json_file方法用来解析json文件，parse_args_into_dataclasses方法用来解析命令行参数
+    if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):#如果传入的是一个json文件
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
         model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
-    else:
+    else:#如果传入的是命令行参数
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
+    # input("args parsed")
     if (
         os.path.exists(training_args.output_dir)
         and os.listdir(training_args.output_dir)
@@ -281,7 +332,7 @@ def main():
         + f" distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
     # Set the verbosity to info of the Transformers logger (on main process only):
-    if is_main_process(training_args.local_rank):
+    if is_main_process(training_args.local_rank):#如果是主进程，设置transformers的日志级别
         transformers.utils.logging.set_verbosity_info()
         transformers.utils.logging.enable_default_handler()
         transformers.utils.logging.enable_explicit_format()
@@ -299,9 +350,10 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
+    #以下代码用来加载数据集
     data_files = {}
     if data_args.train_file is not None:
-        data_files["train"] = data_args.train_file
+        data_files["train"] = data_args.train_file#保存训练数据文件
     extension = data_args.train_file.split(".")[-1]
     if extension == "txt":
         extension = "text"
@@ -309,7 +361,6 @@ def main():
         datasets = load_dataset(extension, data_files=data_files, cache_dir="./data/", delimiter="\t" if "tsv" in data_args.train_file else ",")
     else:
         datasets = load_dataset(extension, data_files=data_files, cache_dir="./data/")
-
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -323,6 +374,7 @@ def main():
         "revision": model_args.model_revision,
         "use_auth_token": True if model_args.use_auth_token else None,
     }
+    #model = AutoModel.from_pretrained("unsup-simcse-bert-base-uncased")
     if model_args.config_name:
         config = AutoConfig.from_pretrained(model_args.config_name, **config_kwargs)
     elif model_args.model_name_or_path:
@@ -330,6 +382,7 @@ def main():
     else:
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
+    config=AutoConfig.from_pretrained("unsup-simcse-bert-base-uncased")
 
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
@@ -337,6 +390,8 @@ def main():
         "revision": model_args.model_revision,
         "use_auth_token": True if model_args.use_auth_token else None,
     }
+    tokenizer = AutoTokenizer.from_pretrained("unsup-simcse-bert-base-uncased")#加载预训练模型的tokenizer
+
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
     elif model_args.model_name_or_path:
@@ -346,7 +401,7 @@ def main():
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
-
+    #加载模型
     if model_args.model_name_or_path:
         if 'roberta' in model_args.model_name_or_path:
             model = RobertaForCL.from_pretrained(
@@ -439,7 +494,6 @@ def main():
         else:
             for key in sent_features:
                 features[key] = [[sent_features[key][i], sent_features[key][i+total]] for i in range(total)]
-            
         return features
 
     if training_args.do_train:
@@ -462,10 +516,11 @@ def main():
         mlm: bool = True
         mlm_probability: float = data_args.mlm_probability
 
-        def __call__(self, features: List[Dict[str, Union[List[int], List[List[int]], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
+        def __call__(self, features: List[Dict[str, Union[List[int], List[List[int]], jt.array]]]) -> Dict[str,jt.array]:
             special_keys = ['input_ids', 'attention_mask', 'token_type_ids', 'mlm_input_ids', 'mlm_labels']
             bs = len(features)
             if bs > 0:
+                print(features[0])
                 num_sent = len(features[0]['input_ids'])
             else:
                 return
@@ -496,34 +551,34 @@ def main():
             return batch
         
         def mask_tokens(
-            self, inputs: torch.Tensor, special_tokens_mask: Optional[torch.Tensor] = None
-        ) -> Tuple[torch.Tensor, torch.Tensor]:
+            self, inputs: jt.array, special_tokens_mask: Optional[jt.array] = None
+        ) -> Tuple[jt.array, jt.array]:
             """
             Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original.
             """
             inputs = inputs.clone()
             labels = inputs.clone()
             # We sample a few tokens in each sequence for MLM training (with probability `self.mlm_probability`)
-            probability_matrix = torch.full(labels.shape, self.mlm_probability)
+            probability_matrix = jt.full(labels.shape, self.mlm_probability)
             if special_tokens_mask is None:
                 special_tokens_mask = [
                     self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
                 ]
-                special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
+                special_tokens_mask = jt.array(special_tokens_mask, dtype=jt.bool)
             else:
                 special_tokens_mask = special_tokens_mask.bool()
 
             probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
-            masked_indices = torch.bernoulli(probability_matrix).bool()
+            masked_indices = jt.bernoulli(probability_matrix).bool()
             labels[~masked_indices] = -100  # We only compute loss on masked tokens
 
             # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-            indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
+            indices_replaced = jt.bernoulli(jt.full(labels.shape, 0.8)).bool() & masked_indices
             inputs[indices_replaced] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
 
             # 10% of the time, we replace masked input tokens with random word
-            indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
-            random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
+            indices_random = jt.bernoulli(jt.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
+            random_words = jt.randint(len(self.tokenizer), labels.shape, dtype=jt.long)
             inputs[indices_random] = random_words[indices_random]
 
             # The rest of the time (10% of the time) we keep the masked input tokens unchanged
@@ -577,9 +632,9 @@ def main():
 
     return results
 
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
+# def _mp_fn(index):
+#     # For xla_spawn (TPUs)
+#     main()
 
 
 if __name__ == "__main__":
